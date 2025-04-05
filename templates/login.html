@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Online Banking{% endblock %}
+
+{% block content %}
+<style>
+.btn-no-border {
+    border: none;
+    background: transparent;
+}
+.btn-no-border:hover, .btn-no-border:focus {
+    background: rgba(0,0,0,0.05);
+}
+.input-group:not(:focus-within) .btn-no-border {
+    color: #6c757d;
+}
+</style>
+
+<div class="auth-container">
+    <h2 class="text-center mb-4">Login</h2>
+    
+    <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+    
+    <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <input type="text" class="form-control" id="username" required>
+        </div>
+        <div class="mb-3">
+            <label for="password" class="form-label">Password</label>
+            <div class="input-group">
+                <input type="password" class="form-control" id="password" required>
+                <button class="btn btn-no-border" type="button" id="togglePassword">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100" id="loginButton">
+            <span class="spinner-border spinner-border-sm d-none" id="loginSpinner" role="status"></span>
+            <span id="loginText">Login</span>
+        </button>
+    </form>
+    <p class="text-center mt-3">
+        Don't have an account? <a href="{{ url_for('register_page') }}">Register here</a>
+    </p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('togglePassword').addEventListener('click', function() {
+    const password = document.getElementById('password');
+    const icon = this.querySelector('i');
+    
+    if (password.type === 'password') {
+        password.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        password.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+});
+
+async function handleLogin(event) {
+    event.preventDefault();
+    
+    const errorAlert = document.getElementById('errorAlert');
+    const loginButton = document.getElementById('loginButton');
+    const loginSpinner = document.getElementById('loginSpinner');
+    const loginText = document.getElementById('loginText');
+    
+    errorAlert.classList.add('d-none');
+    loginButton.disabled = true;
+    loginSpinner.classList.remove('d-none');
+    loginText.textContent = 'Logging in...';
+    
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    
+    try {
+        const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            window.location.href = '/dashboard';
+        } else {
+            errorAlert.textContent = data.error || 'Login failed';
+            errorAlert.classList.remove('d-none');
+            loginButton.disabled = false;
+            loginSpinner.classList.add('d-none');
+            loginText.textContent = 'Login';
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        errorAlert.textContent = 'An error occurred. Please try again.';
+        errorAlert.classList.remove('d-none');
+        loginButton.disabled = false;
+        loginSpinner.classList.add('d-none');
+        loginText.textContent = 'Login';
+    }
+}
+</script>
+{% endblock %} 
