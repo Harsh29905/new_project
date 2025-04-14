@@ -13,6 +13,10 @@ from cryptography.hazmat.backends import default_backend
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Random import get_random_bytes
+import random
 
 # Load environment variables
 load_dotenv()
@@ -27,16 +31,17 @@ login_manager.login_view = 'login_page'
 
 # Database connection function
 def get_db_connection():
+    """Get a database connection."""
     try:
-        connection = mysql.connector.connect(
-            host=os.getenv('DB_HOST'),
-            user=os.getenv('DB_USER'),
-            password=os.getenv('DB_PASSWORD'),
-            database=os.getenv('DB_NAME')
+        conn = mysql.connector.connect(
+            host=os.getenv('DB_HOST', 'localhost'),
+            user=os.getenv('DB_USER', 'root'),
+            password=os.getenv('DB_PASSWORD', '1234'),
+            database=os.getenv('DB_NAME', 'bank_db')
         )
-        return connection
-    except Error as e:
-        print(f"Error connecting to MySQL: {e}")
+        return conn
+    except mysql.connector.Error as err:
+        print(f"Database connection error: {err}")
         return None
 
 # AES Encryption setup
@@ -51,66 +56,46 @@ def get_encryption_key():
     return kdf.derive(key)
 
 def encrypt_data(data):
-    if not data:
+    """Encrypt sensitive data using AES encryption."""
+    if data is None:
         return None
-    
-    # Convert data to bytes
-    data_bytes = str(data).encode()
-    
-    # Pad the data
-    padder = padding.PKCS7(128).padder()
-    padded_data = padder.update(data_bytes) + padder.finalize()
-    
-    # Generate a random IV
-    iv = os.urandom(16)
-    
-    # Create cipher
-    cipher = Cipher(
-        algorithms.AES(get_encryption_key()),
-        modes.CBC(iv),
-        backend=default_backend()
-    )
-    
-    # Encrypt
-    encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-    
-    # Combine IV and encrypted data
-    combined = iv + encrypted_data
-    
-    # Return as base64 string
-    return base64.b64encode(combined).decode()
+    try:
+        # Generate a random IV
+        iv = get_random_bytes(16)
+        # Create cipher object
+        cipher = AES.new(get_encryption_key(), AES.MODE_CBC, iv)
+        # Pad the data to be a multiple of 16 bytes
+        padded_data = pad(data.encode(), AES.block_size)
+        # Encrypt the data
+        encrypted_data = cipher.encrypt(padded_data)
+        # Combine IV and encrypted data
+        combined = iv + encrypted_data
+        # Return base64 encoded result
+        return base64.b64encode(combined).decode('utf-8')
+    except Exception as e:
+        print(f"Encryption error: {str(e)}")
+        return None
 
 def decrypt_data(encrypted_data):
-    if not encrypted_data:
+    """Decrypt sensitive data using AES decryption."""
+    if encrypted_data is None:
         return None
-    
     try:
-        # Decode base64
+        # Decode base64 data
         combined = base64.b64decode(encrypted_data)
-        
-        # Split IV and encrypted data
+        # Extract IV and encrypted data
         iv = combined[:16]
         encrypted_data = combined[16:]
-        
-        # Create cipher
-        cipher = Cipher(
-            algorithms.AES(get_encryption_key()),
-            modes.CBC(iv),
-            backend=default_backend()
-        )
-        
-        # Decrypt
-        decryptor = cipher.decryptor()
-        padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
-        
-        # Unpad
-        unpadder = padding.PKCS7(128).unpadder()
-        data = unpadder.update(padded_data) + unpadder.finalize()
-        
-        return data.decode()
+        # Create cipher object
+        cipher = AES.new(get_encryption_key(), AES.MODE_CBC, iv)
+        # Decrypt the data
+        decrypted_data = cipher.decrypt(encrypted_data)
+        # Unpad the data
+        unpadded_data = unpad(decrypted_data, AES.block_size)
+        # Return decoded result
+        return unpadded_data.decode('utf-8')
     except Exception as e:
-        print(f"Decryption error: {e}")
+        print(f"Decryption error: {str(e)}")
         return None
 
 # User class
@@ -401,6 +386,166 @@ def api_withdraw():
 def api_logout():
     logout_user()
     return jsonify({'message': 'Logout successful'}), 200
+
+def create_user(username, email, password):
+    """Create a new user with encrypted data."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+
+        cursor = conn.cursor()
+        
+        # Generate account ID
+        account_id = generate_account_id()
+        
+        # Encrypt sensitive data
+        encrypted_email = encrypt_data(email)
+        encrypted_account_id = encrypt_data(account_id)
+        
+        # Hash password
+        password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+        
+        # Insert user
+        cursor.execute('''
+            INSERT INTO users (username, email, password_hash, account_id, balance)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (username, encrypted_email, password_hash, encrypted_account_id, 0.00))
+        
+        user_id = cursor.lastrowid
+        conn.commit()
+        
+        return {
+            'id': user_id,
+            'username': username,
+            'email': email,
+            'account_id': account_id,
+            'balance': 0.00
+        }
+    except mysql.connector.Error as err:
+        print(f"Error creating user: {err}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def get_user_by_username(username):
+    """Get user by username with decrypted data."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
+        user = cursor.fetchone()
+        
+        if user:
+            # Decrypt sensitive data
+            user['email'] = decrypt_data(user['email'])
+            user['account_id'] = decrypt_data(user['account_id'])
+        
+        return user
+    except mysql.connector.Error as err:
+        print(f"Error getting user: {err}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def get_user_by_id(user_id):
+    """Get user by ID with decrypted data."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))
+        user = cursor.fetchone()
+        
+        if user:
+            # Decrypt sensitive data
+            user['email'] = decrypt_data(user['email'])
+            user['account_id'] = decrypt_data(user['account_id'])
+        
+        return user
+    except mysql.connector.Error as err:
+        print(f"Error getting user: {err}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def create_transaction(user_id, transaction_type, amount, balance_after):
+    """Create a new transaction with encrypted data."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+
+        cursor = conn.cursor()
+        
+        # Encrypt transaction type
+        encrypted_type = encrypt_data(transaction_type)
+        
+        # Insert transaction
+        cursor.execute('''
+            INSERT INTO transactions (user_id, transaction_type, amount, balance_after)
+            VALUES (%s, %s, %s, %s)
+        ''', (user_id, encrypted_type, amount, balance_after))
+        
+        transaction_id = cursor.lastrowid
+        conn.commit()
+        
+        return {
+            'id': transaction_id,
+            'user_id': user_id,
+            'transaction_type': transaction_type,
+            'amount': amount,
+            'balance_after': balance_after,
+            'timestamp': datetime.now()
+        }
+    except mysql.connector.Error as err:
+        print(f"Error creating transaction: {err}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def get_transactions(user_id):
+    """Get user's transactions with decrypted data."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return []
+
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute('''
+            SELECT * FROM transactions 
+            WHERE user_id = %s 
+            ORDER BY timestamp DESC
+        ''', (user_id,))
+        
+        transactions = cursor.fetchall()
+        
+        # Decrypt transaction types
+        for transaction in transactions:
+            transaction['transaction_type'] = decrypt_data(transaction['transaction_type'])
+        
+        return transactions
+    except mysql.connector.Error as err:
+        print(f"Error getting transactions: {err}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def generate_account_id():
+    """Generate a unique account ID using timestamp and random number."""
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    random_num = ''.join([str(random.randint(0, 9)) for _ in range(4)])
+    return f'ACC{timestamp}{random_num}'
 
 if __name__ == '__main__':
     app.run(debug=True)
