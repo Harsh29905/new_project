@@ -20,6 +20,7 @@
     <h2 class="text-center mb-4">Register</h2>
     
     <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+    <div id="successAlert" class="alert alert-success d-none" role="alert"></div>
     
     <form id="registerForm" onsubmit="handleRegister(event)">
         <div class="mb-3">
@@ -66,9 +67,7 @@
         Already have an account? <a href="{{ url_for('login_page') }}">Login here</a>
     </p>
 </div>
-{% endblock %}
 
-{% block extra_js %}
 <script>
 function togglePasswordVisibility(inputId, buttonId) {
     const input = document.getElementById(inputId);
@@ -86,129 +85,127 @@ function togglePasswordVisibility(inputId, buttonId) {
     }
 }
 
-document.getElementById('togglePassword').addEventListener('click', () => 
-    togglePasswordVisibility('password', 'togglePassword')
-);
-
-document.getElementById('toggleConfirmPassword').addEventListener('click', () => 
-    togglePasswordVisibility('confirm_password', 'toggleConfirmPassword')
-);
-
 function checkPasswordStrength() {
     const password = document.getElementById('password').value;
     const strengthBar = document.getElementById('passwordStrength');
     const strengthText = document.getElementById('passwordStrengthText');
     
     let strength = 0;
+    let feedback = '';
+    
     if (password.length >= 8) strength += 25;
-    if (password.match(/[a-z]+/)) strength += 25;
-    if (password.match(/[A-Z]+/)) strength += 25;
-    if (password.match(/[0-9]+/)) strength += 25;
+    if (password.match(/[a-z]/)) strength += 25;
+    if (password.match(/[A-Z]/)) strength += 25;
+    if (password.match(/[0-9]/)) strength += 25;
     
     strengthBar.style.width = strength + '%';
     
-    if (strength <= 25) {
+    if (strength < 25) {
         strengthBar.className = 'progress-bar bg-danger';
-        strengthText.textContent = 'Weak password';
-    } else if (strength <= 50) {
+        feedback = 'Very Weak';
+    } else if (strength < 50) {
         strengthBar.className = 'progress-bar bg-warning';
-        strengthText.textContent = 'Fair password';
-    } else if (strength <= 75) {
+        feedback = 'Weak';
+    } else if (strength < 75) {
         strengthBar.className = 'progress-bar bg-info';
-        strengthText.textContent = 'Good password';
+        feedback = 'Medium';
     } else {
         strengthBar.className = 'progress-bar bg-success';
-        strengthText.textContent = 'Strong password';
+        feedback = 'Strong';
     }
+    
+    strengthText.textContent = feedback;
 }
 
-async function handleRegister(event) {
+function handleRegister(event) {
     event.preventDefault();
     
-    const errorAlert = document.getElementById('errorAlert');
-    const registerButton = document.getElementById('registerButton');
-    const registerSpinner = document.getElementById('registerSpinner');
-    const registerText = document.getElementById('registerText');
+    // Reset error states
+    document.getElementById('errorAlert').classList.add('d-none');
+    document.getElementById('usernameError').textContent = '';
+    document.getElementById('emailError').textContent = '';
+    document.getElementById('passwordMatchError').textContent = '';
     
-    const username = document.getElementById('username');
-    const email = document.getElementById('email');
-    const password = document.getElementById('password');
-    const confirmPassword = document.getElementById('confirm_password');
+    const username = document.getElementById('username').value;
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
     
-    // Reset previous errors
-    errorAlert.classList.add('d-none');
-    [username, email, password, confirmPassword].forEach(input => {
-        input.classList.remove('is-invalid');
-    });
-    
-    // Validate passwords match
-    if (password.value !== confirmPassword.value) {
-        confirmPassword.classList.add('is-invalid');
+    // Validate password match
+    if (password !== confirmPassword) {
         document.getElementById('passwordMatchError').textContent = 'Passwords do not match';
         return;
     }
     
     // Show loading state
-    registerButton.disabled = true;
-    registerSpinner.classList.remove('d-none');
-    registerText.textContent = 'Registering...';
+    const button = document.getElementById('registerButton');
+    const spinner = document.getElementById('registerSpinner');
+    const buttonText = document.getElementById('registerText');
+    button.disabled = true;
+    spinner.classList.remove('d-none');
+    buttonText.textContent = 'Registering...';
     
-    try {
-        const response = await fetch('/api/register', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                username: username.value,
-                email: email.value,
-                password: password.value
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            // Show success message
-            errorAlert.textContent = 'Registration successful! Your account ID is: ' + data.account_id;
-            errorAlert.classList.remove('alert-danger');
-            errorAlert.classList.add('alert-success');
-            errorAlert.classList.remove('d-none');
+    fetch('/api/register', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            username: username,
+            email: email,
+            password: password
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            // Handle specific field errors
+            if (data.field === 'username') {
+                document.getElementById('usernameError').textContent = data.message;
+            } else if (data.field === 'email') {
+                document.getElementById('emailError').textContent = data.message;
+            } else {
+                document.getElementById('errorAlert').textContent = data.message;
+                document.getElementById('errorAlert').classList.remove('d-none');
+            }
+        } else {
+            // Show success message with account ID
+            const successAlert = document.getElementById('successAlert');
+            successAlert.innerHTML = `
+                <h4 class="alert-heading">Registration Successful!</h4>
+                <p>Your account has been created successfully.</p>
+                <hr>
+                <p class="mb-0">Your Account ID: <strong>${data.account_id}</strong></p>
+                <p class="mb-0">Please keep this ID safe. You'll need it for future reference.</p>
+            `;
+            successAlert.classList.remove('d-none');
             
-            // Redirect after 2 seconds
+            // Redirect to login page after 5 seconds
             setTimeout(() => {
                 window.location.href = '/login';
-            }, 2000);
-        } else {
-            // Show specific error messages
-            if (data.error.includes('Username')) {
-                username.classList.add('is-invalid');
-                document.getElementById('usernameError').textContent = data.error;
-            } else if (data.error.includes('Email')) {
-                email.classList.add('is-invalid');
-                document.getElementById('emailError').textContent = data.error;
-            } else {
-                errorAlert.textContent = data.error || 'Registration failed';
-                errorAlert.classList.add('alert-danger');
-                errorAlert.classList.remove('d-none');
-            }
-            
-            // Reset button state
-            registerButton.disabled = false;
-            registerSpinner.classList.add('d-none');
-            registerText.textContent = 'Register';
+            }, 5000);
         }
-    } catch (error) {
+    })
+    .catch(error => {
         console.error('Error:', error);
-        errorAlert.textContent = 'An error occurred. Please try again.';
-        errorAlert.classList.add('alert-danger');
-        errorAlert.classList.remove('d-none');
-        
+        document.getElementById('errorAlert').textContent = 'An error occurred during registration. Please try again.';
+        document.getElementById('errorAlert').classList.remove('d-none');
+    })
+    .finally(() => {
         // Reset button state
-        registerButton.disabled = false;
-        registerSpinner.classList.add('d-none');
-        registerText.textContent = 'Register';
-    }
+        button.disabled = false;
+        spinner.classList.add('d-none');
+        buttonText.textContent = 'Register';
+    });
 }
+
+// Initialize password visibility toggles
+document.getElementById('togglePassword').addEventListener('click', () => {
+    togglePasswordVisibility('password', 'togglePassword');
+});
+
+document.getElementById('toggleConfirmPassword').addEventListener('click', () => {
+    togglePasswordVisibility('confirm_password', 'toggleConfirmPassword');
+});
 </script>
 {% endblock %} 
